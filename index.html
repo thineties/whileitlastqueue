@@ -164,19 +164,34 @@ function getBaseUrl() {
 function getViewParam() {
   const params = new URLSearchParams(window.location.search);
   const v = params.get("view");
-  return ["staff", "board", "check"].includes(v) ? v : null;
+  return ["staff", "board", "check", "public"].includes(v) ? v : null;
 }
 
 function TicketQueue() {
-  const lockedView = getViewParam(); // null on the bare URL, else 'staff' | 'board' | 'check'
-  const [view, setView] = useState(lockedView || "staff");
+  const routeParam = getViewParam(); // null on the bare URL, else 'staff' | 'board' | 'check' | 'public'
+  const isPublicMode = routeParam === "public";
+  const lockedView = routeParam === "staff" || routeParam === "board" || routeParam === "check" ? routeParam : null;
+  const [view, setView] = useState(lockedView || (isPublicMode ? "check" : "staff"));
   const q = useQueueState();
   const baseUrl = getBaseUrl();
   const links = {
     staff: baseUrl,
     board: baseUrl + "?view=board",
     check: baseUrl + "?view=check",
+    public: baseUrl + "?view=public",
   };
+
+  const tabs = isPublicMode
+    ? [
+        { k: "board", label: "Display Board" },
+        { k: "check", label: "Check My Ticket" },
+      ]
+    : [
+        { k: "staff", label: "Counter" },
+        { k: "board", label: "Display Board" },
+        { k: "check", label: "Check My Ticket" },
+      ];
+  const showTabs = !lockedView; // shown for bare URL (full) and public mode (2 tabs)
 
   return (
     <div
@@ -214,13 +229,9 @@ function TicketQueue() {
         >
           TICKET QUEUE
         </div>
-        {!lockedView && (
+        {showTabs && (
           <div style={{ display: "flex", gap: 8 }}>
-            {[
-              { k: "staff", label: "Counter" },
-              { k: "board", label: "Display Board" },
-              { k: "check", label: "Check My Ticket" },
-            ].map((t) => (
+            {tabs.map((t) => (
               <button
                 key={t.k}
                 onClick={() => setView(t.k)}
@@ -248,7 +259,7 @@ function TicketQueue() {
         </div>
       )}
 
-      {view === "board" && <BoardView {...q} checkLink={links.check} />}
+      {view === "board" && <BoardView {...q} checkLink={links.public} />}
       {view === "staff" && <StaffView {...q} links={links} />}
       {view === "check" && <CheckView {...q} />}
     </div>
@@ -432,7 +443,7 @@ function CheckView({ currentBatch, history, issuedUpTo }) {
           paddingTop: 16,
         }}
       >
-        Currently serving:{" "}
+        NOW ENTERING:{" "}
         <strong style={{ color: COLORS.mustard }}>
           {currentBatch.length
             ? `${pad(currentBatch[0])}\u2013${pad(currentBatch[currentBatch.length - 1])}`
@@ -578,7 +589,8 @@ function StaffView({
         <div style={{ display: "grid", gap: 10 }}>
           {[
             { label: "Display Board (TV / kiosk)", url: links.board },
-            { label: "Check My Ticket (share / QR)", url: links.check },
+            { label: "Check My Ticket (direct link)", url: links.check },
+            { label: "Public (Board + Check — used by QR)", url: links.public },
           ].map((l) => (
             <div key={l.label}>
               <div style={{ color: COLORS.chalkDim, fontSize: 12, marginBottom: 4 }}>
