@@ -157,9 +157,26 @@ function useQueueState() {
   return { ...data, connected, setBatchSize, issueTicket, callNextBatch, recall, resetQueue };
 }
 
+function getBaseUrl() {
+  return window.location.origin + window.location.pathname;
+}
+
+function getViewParam() {
+  const params = new URLSearchParams(window.location.search);
+  const v = params.get("view");
+  return ["staff", "board", "check"].includes(v) ? v : null;
+}
+
 function TicketQueue() {
-  const [view, setView] = useState("staff"); // 'staff' | 'board' | 'check'
+  const lockedView = getViewParam(); // null on the bare URL, else 'staff' | 'board' | 'check'
+  const [view, setView] = useState(lockedView || "staff");
   const q = useQueueState();
+  const baseUrl = getBaseUrl();
+  const links = {
+    staff: baseUrl,
+    board: baseUrl + "?view=board",
+    check: baseUrl + "?view=check",
+  };
 
   return (
     <div
@@ -197,30 +214,32 @@ function TicketQueue() {
         >
           TICKET QUEUE
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {[
-            { k: "staff", label: "Counter" },
-            { k: "board", label: "Display Board" },
-            { k: "check", label: "Check My Ticket" },
-          ].map((t) => (
-            <button
-              key={t.k}
-              onClick={() => setView(t.k)}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 999,
-                border: `1px solid ${view === t.k ? COLORS.mustard : COLORS.line}`,
-                background: view === t.k ? COLORS.mustard : "transparent",
-                color: view === t.k ? COLORS.boardDeep : COLORS.chalkDim,
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: "pointer",
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {!lockedView && (
+          <div style={{ display: "flex", gap: 8 }}>
+            {[
+              { k: "staff", label: "Counter" },
+              { k: "board", label: "Display Board" },
+              { k: "check", label: "Check My Ticket" },
+            ].map((t) => (
+              <button
+                key={t.k}
+                onClick={() => setView(t.k)}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 999,
+                  border: `1px solid ${view === t.k ? COLORS.mustard : COLORS.line}`,
+                  background: view === t.k ? COLORS.mustard : "transparent",
+                  color: view === t.k ? COLORS.boardDeep : COLORS.chalkDim,
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: "pointer",
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {!q.connected && (
@@ -229,14 +248,14 @@ function TicketQueue() {
         </div>
       )}
 
-      {view === "board" && <BoardView {...q} />}
-      {view === "staff" && <StaffView {...q} />}
+      {view === "board" && <BoardView {...q} checkLink={links.check} />}
+      {view === "staff" && <StaffView {...q} links={links} />}
       {view === "check" && <CheckView {...q} />}
     </div>
   );
 }
 
-function BoardView({ currentBatch, history, recall, issuedUpTo }) {
+function BoardView({ currentBatch, history, recall, issuedUpTo, checkLink }) {
   const from = currentBatch[0];
   const to = currentBatch[currentBatch.length - 1];
   return (
@@ -246,6 +265,7 @@ function BoardView({ currentBatch, history, recall, issuedUpTo }) {
       </div>
       <div
         onClick={() => recall(currentBatch)}
+
         title="Tap to repeat the call"
         style={{
           fontFamily: "'Orbitron', monospace",
@@ -295,6 +315,31 @@ function BoardView({ currentBatch, history, recall, issuedUpTo }) {
           ))}
         </div>
       </div>
+
+      {checkLink && (
+        <div
+          style={{
+            marginTop: 44,
+            borderTop: `2px dashed ${COLORS.line}`,
+            paddingTop: 24,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <div style={{ color: COLORS.chalkDim, fontSize: 14 }}>
+            Scan to check your ticket
+          </div>
+          <img
+            src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&bgcolor=070A0C&color=9AD6DD&qzone=1&data=${encodeURIComponent(checkLink)}`}
+            alt="QR code to check your ticket"
+            width={140}
+            height={140}
+            style={{ borderRadius: 8, border: `1px solid ${COLORS.line}` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -408,6 +453,7 @@ function StaffView({
   issuedUpTo,
   issueTicket,
   resetQueue,
+  links,
 }) {
   const from = currentBatch[0];
   const to = currentBatch[currentBatch.length - 1];
@@ -515,6 +561,45 @@ function StaffView({
           >
             Reset queue
           </button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          background: COLORS.boardDeep,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 12,
+          padding: 18,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 10, color: COLORS.mustard }}>
+          Links
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {[
+            { label: "Display Board (TV / kiosk)", url: links.board },
+            { label: "Check My Ticket (share / QR)", url: links.check },
+          ].map((l) => (
+            <div key={l.label}>
+              <div style={{ color: COLORS.chalkDim, fontSize: 12, marginBottom: 4 }}>
+                {l.label}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  readOnly
+                  value={l.url}
+                  onFocus={(e) => e.target.select()}
+                  style={{ ...inputStyle, flex: 1, fontSize: 12 }}
+                />
+                <button
+                  onClick={() => navigator.clipboard && navigator.clipboard.writeText(l.url)}
+                  style={{ ...secondaryBtn, padding: "6px 10px", fontSize: 12 }}
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
