@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ticket Queue — While It Lasts</title>
+<meta name="color-scheme" content="dark" />
+<style>
+  html, body { margin: 0; padding: 0; background: #070A0C; color-scheme: dark; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect, useCallback } = React;
+
+// ---- design tokens ----
+// Matched to "While It Lasts" (thineties.github.io/whileitlast):
+// near-black void, cyan-glow accent, Space Mono throughout.
+const COLORS = {
+  board: "#070A0C",
+  boardDeep: "#0C1214",
+  chalk: "#EEF4F4",
+  chalkDim: "#9FB0B0",
+  mustard: "#9AD6DD", // primary accent — the site's --glow cyan
+  brick: "#FF5A5A", // alert / skip accent — the site's --c-red
+  line: "#3A4442", // derived: --ink-faint darkened for hairlines on near-black
+};
+
+const MAX_TICKET = 100;
+
+function speakEn(text) {
+  try {
+    if (!("speechSynthesis" in window)) return;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "en-US";
+    utter.rate = 0.95;
+    utter.pitch = 1;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  } catch (e) {
+    // TTS unsupported — board still updates visually
+  }
+}
+
+function pad(n) {
+  return String(n).padStart(3, "0");
+}
+
+function TicketQueue() {
+  const [view, setView] = useState("staff"); // 'staff' | 'board'
+  const [nextTicket, setNextTicket] = useState(1); // next number to hand out
+  const [served, setServed] = useState(0); // last ticket number actually taken/issued marker
+  const [batchSize, setBatchSize] = useState(10);
+  const [currentBatch, setCurrentBatch] = useState([]); // array of numbers currently being called
+  const [history, setHistory] = useState([]); // past batches, newest first
+  const [issuedUpTo, setIssuedUpTo] = useState(0); // highest ticket number handed out so far
+
+  const issueTicket = () => {
+    setIssuedUpTo((prev) => {
+      const n = prev >= MAX_TICKET ? 1 : prev + 1;
+      return n;
+    });
+  };
+
+  const callNextBatch = useCallback(() => {
+    setCurrentBatch((prevBatch) => {
+      // start point = one after the last number ever called (wraps at 100)
+      const lastCalled = history.length > 0 ? history[0].to : 0;
+      let start = lastCalled >= MAX_TICKET ? 1 : lastCalled + 1;
+      const nums = [];
+      let cur = start;
+      for (let i = 0; i < batchSize; i++) {
+        nums.push(cur);
+        cur = cur >= MAX_TICKET ? 1 : cur + 1;
+      }
+      const from = nums[0];
+      const to = nums[nums.length - 1];
+      setHistory((h) => [{ from, to, nums, at: new Date() }, ...h].slice(0, 6));
+      speakEn(
+        batchSize === 1
+          ? `Now serving ticket number ${from}.`
+          : `Now serving tickets number ${from} to ${to}, please proceed to the counter.`
+      );
+      return nums;
+    });
+  }, [batchSize, history]);
+
+  const recall = () => {
+    if (currentBatch.length === 0) return;
+    const from = currentBatch[0];
+    const to = currentBatch[currentBatch.length - 1];
+    speakEn(
+      currentBatch.length === 1
+        ? `Repeating, ticket number ${from}.`
+        : `Repeating, tickets number ${from} to ${to}, please proceed to the counter.`
+    );
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: COLORS.board,
+        fontFamily: "'Space Mono', ui-monospace, monospace",
+        color: COLORS.chalk,
+      }}
+    >
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap"
+      />
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "14px 20px",
+          borderBottom: `2px dashed ${COLORS.line}`,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "'Space Mono', monospace",
+            fontWeight: 700,
+            fontSize: 26,
+            letterSpacing: 1.5,
+            color: COLORS.mustard,
+          }}
+        >
+          TICKET QUEUE
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[
+            { k: "staff", label: "Counter" },
+            { k: "board", label: "Display Board" },
+          ].map((t) => (
+            <button
+              key={t.k}
+              onClick={() => setView(t.k)}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 999,
+                border: `1px solid ${view === t.k ? COLORS.mustard : COLORS.line}`,
+                background: view === t.k ? COLORS.mustard : "transparent",
+                color: view === t.k ? COLORS.boardDeep : COLORS.chalkDim,
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view === "board" ? (
+        <BoardView currentBatch={currentBatch} history={history} recall={recall} issuedUpTo={issuedUpTo} />
+      ) : (
+        <StaffView
+          batchSize={batchSize}
+          setBatchSize={setBatchSize}
+          currentBatch={currentBatch}
+          history={history}
+          callNextBatch={callNextBatch}
+          recall={recall}
+          issuedUpTo={issuedUpTo}
+          issueTicket={issueTicket}
+        />
+      )}
+    </div>
+  );
+}
+
+function BoardView({ currentBatch, history, recall, issuedUpTo }) {
+  const from = currentBatch[0];
+  const to = currentBatch[currentBatch.length - 1];
+  return (
+    <div style={{ padding: "40px 24px", textAlign: "center" }}>
+      <div style={{ color: COLORS.chalkDim, fontSize: 15, marginBottom: 8 }}>
+        NOW SERVING
+      </div>
+      <div
+        onClick={recall}
+        title="Tap to repeat the call"
+        style={{
+          fontFamily: "'Space Mono', monospace",
+          fontWeight: 700,
+          fontSize: "min(16vw, 140px)",
+          lineHeight: 1,
+          color: currentBatch.length ? COLORS.mustard : COLORS.line,
+          textShadow: currentBatch.length ? `0 0 30px rgba(154,214,221,0.35)` : "none",
+          cursor: currentBatch.length ? "pointer" : "default",
+          userSelect: "none",
+        }}
+      >
+        {currentBatch.length ? `${pad(from)}\u2013${pad(to)}` : "---"}
+      </div>
+
+      <div style={{ marginTop: 20, color: COLORS.chalkDim, fontSize: 14 }}>
+        Tickets issued so far: <strong style={{ color: COLORS.chalk }}>{issuedUpTo || 0}</strong> / {MAX_TICKET}
+      </div>
+
+      <div
+        style={{
+          marginTop: 44,
+          borderTop: `2px dashed ${COLORS.line}`,
+          paddingTop: 24,
+        }}
+      >
+        <div style={{ color: COLORS.chalkDim, fontSize: 14, marginBottom: 12 }}>
+          Recently called
+        </div>
+        <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
+          {history.length === 0 && <span style={{ color: COLORS.line }}>No calls yet</span>}
+          {history.slice(1, 5).map((b, i) => (
+            <div
+              key={i}
+              style={{
+                fontFamily: "'Space Mono', monospace",
+                fontWeight: 700,
+                fontSize: 24,
+                color: COLORS.chalkDim,
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 8,
+                padding: "6px 14px",
+              }}
+            >
+              {pad(b.from)}{"\u2013"}{pad(b.to)}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StaffView({
+  batchSize,
+  setBatchSize,
+  currentBatch,
+  history,
+  callNextBatch,
+  recall,
+  issuedUpTo,
+  issueTicket,
+}) {
+  const from = currentBatch[0];
+  const to = currentBatch[currentBatch.length - 1];
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(260px, 340px) 1fr",
+        gap: 20,
+        padding: 20,
+      }}
+    >
+      {/* left: controls */}
+      <div
+        style={{
+          background: COLORS.boardDeep,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 12,
+          padding: 18,
+          alignSelf: "start",
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 12, color: COLORS.mustard }}>
+          Call settings
+        </div>
+
+        <div style={{ display: "grid", gap: 4, marginBottom: 14 }}>
+          <label style={{ fontSize: 13, color: COLORS.chalkDim }}>
+            Tickets per call
+          </label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[5, 10].map((n) => (
+              <button
+                key={n}
+                onClick={() => setBatchSize(n)}
+                style={{
+                  ...(batchSize === n ? primaryBtn : secondaryBtn),
+                  padding: "8px 14px",
+                  flex: 1,
+                }}
+              >
+                {n}
+              </button>
+            ))}
+            <input
+              type="number"
+              min={1}
+              max={MAX_TICKET}
+              value={batchSize}
+              onChange={(e) => setBatchSize(Math.max(1, Math.min(MAX_TICKET, Number(e.target.value) || 1)))}
+              style={{ ...inputStyle, width: 64, textAlign: "center" }}
+              title="Custom batch size"
+            />
+          </div>
+        </div>
+
+        <button onClick={callNextBatch} style={{ ...primaryBtn, width: "100%", padding: "12px 16px", fontSize: 15 }}>
+          Call next {batchSize} ticket{batchSize > 1 ? "s" : ""}
+        </button>
+
+        {currentBatch.length > 0 && (
+          <button onClick={recall} style={{ ...secondaryBtn, width: "100%", marginTop: 8 }}>
+            Repeat call
+          </button>
+        )}
+
+        <div style={{ marginTop: 22, borderTop: `1px dashed ${COLORS.line}`, paddingTop: 14 }}>
+          <div style={{ color: COLORS.chalkDim, fontSize: 13, marginBottom: 8 }}>
+            Now serving
+          </div>
+          <div
+            style={{
+              fontFamily: "'Space Mono', monospace",
+              fontSize: 32,
+              fontWeight: 700,
+              color: currentBatch.length ? COLORS.mustard : COLORS.line,
+            }}
+          >
+            {currentBatch.length ? `${pad(from)}\u2013${pad(to)}` : "---"}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18, borderTop: `1px dashed ${COLORS.line}`, paddingTop: 14 }}>
+          <div style={{ color: COLORS.chalkDim, fontSize: 13, marginBottom: 8 }}>
+            Ticket dispenser (1{"\u2013"}{MAX_TICKET}, loops back to 1)
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={issueTicket} style={secondaryBtn}>
+              Issue next ticket
+            </button>
+            <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 20, color: COLORS.chalk }}>
+              {issuedUpTo ? pad(issuedUpTo) : "\u2014"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* right: recent calls */}
+      <div
+        style={{
+          background: COLORS.boardDeep,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 12,
+          padding: 18,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 10, color: COLORS.mustard }}>
+          Call history
+        </div>
+        {history.length === 0 ? (
+          <div style={{ color: COLORS.line }}>No calls yet</div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {history.map((b, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  background: COLORS.board,
+                  border: `1px solid ${COLORS.line}`,
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "'Space Mono', monospace",
+                    fontWeight: 700,
+                    fontSize: 18,
+                    color: i === 0 ? COLORS.mustard : COLORS.chalk,
+                  }}
+                >
+                  {pad(b.from)}{"\u2013"}{pad(b.to)}
+                </span>
+                <span style={{ color: COLORS.chalkDim, fontSize: 12 }}>
+                  {i === 0 ? "current" : b.at.toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const inputStyle = {
+  background: COLORS.board,
+  border: `1px solid ${COLORS.line}`,
+  borderRadius: 8,
+  padding: "9px 10px",
+  color: COLORS.chalk,
+  fontSize: 14,
+  outline: "none",
+};
+
+const primaryBtn = {
+  background: COLORS.mustard,
+  color: COLORS.boardDeep,
+  border: "none",
+  borderRadius: 8,
+  padding: "10px 16px",
+  fontWeight: 700,
+  fontSize: 14,
+  cursor: "pointer",
+};
+
+const secondaryBtn = {
+  background: "transparent",
+  color: COLORS.chalk,
+  border: `1px solid ${COLORS.chalk}`,
+  borderRadius: 8,
+  padding: "10px 14px",
+  fontSize: 14,
+  cursor: "pointer",
+};
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<TicketQueue />);
+</script>
+</body>
+</html>
