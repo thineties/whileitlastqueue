@@ -17,8 +17,11 @@
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
 <script type="text/babel" data-presets="react">
-const { useState, useRef, useEffect, useCallback } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 
 // ---- design tokens ----
 // Matched to "While It Lasts" (thineties.github.io/whileitlast):
@@ -29,11 +32,30 @@ const COLORS = {
   chalk: "#EEF4F4",
   chalkDim: "#9FB0B0",
   mustard: "#9AD6DD", // primary accent — the site's --glow cyan
-  brick: "#FF5A5A", // alert / skip accent — the site's --c-red
-  line: "#3A4442", // derived: --ink-faint darkened for hairlines on near-black
+  brick: "#FF5A5A", // alert accent — the site's --c-red
+  green: "#76E0A3", // "your turn" success accent — the site's --c-green
+  line: "#3A4442",
 };
 
 const MAX_TICKET = 100;
+
+// ---------------------------------------------------------------------
+// FIREBASE SETUP — paste your project's config from the Firebase console
+// (Project settings → General → Your apps → SDK setup and configuration)
+// ---------------------------------------------------------------------
+const firebaseConfig = {
+  apiKey: "AIzaSyApoQLhzJi4s7ZK6bq78EeUq0LA-FI6Y6g",
+  authDomain: "whileitlastqueue.firebaseapp.com",
+  databaseURL: "https://whileitlastqueue-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "whileitlastqueue",
+  storageBucket: "whileitlastqueue.firebasestorage.app",
+  messagingSenderId: "707849927047",
+  appId: "1:707849927047:web:78d1be819e5288f10dfb22",
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const queueRef = db.ref("queue");
 
 function speakEn(text) {
   try {
@@ -53,47 +75,69 @@ function pad(n) {
   return String(n).padStart(3, "0");
 }
 
-function TicketQueue() {
-  const [view, setView] = useState("staff"); // 'staff' | 'board'
-  const [nextTicket, setNextTicket] = useState(1); // next number to hand out
-  const [served, setServed] = useState(0); // last ticket number actually taken/issued marker
-  const [batchSize, setBatchSize] = useState(10);
-  const [currentBatch, setCurrentBatch] = useState([]); // array of numbers currently being called
-  const [history, setHistory] = useState([]); // past batches, newest first
-  const [issuedUpTo, setIssuedUpTo] = useState(0); // highest ticket number handed out so far
+// shared Firebase-backed queue state — used by every view
+function useQueueState() {
+  const [data, setData] = useState({
+    batchSize: 10,
+    issuedUpTo: 0,
+    currentBatch: [],
+    history: [],
+  });
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    const handler = (snapshot) => {
+      const val = snapshot.val();
+      if (val) {
+        setData({
+          batchSize: val.batchSize || 10,
+          issuedUpTo: val.issuedUpTo || 0,
+          currentBatch: val.currentBatch || [],
+          history: val.history || [],
+        });
+      }
+      setConnected(true);
+    };
+    queueRef.on("value", handler);
+    return () => queueRef.off("value", handler);
+  }, []);
+
+  const setBatchSize = (n) => queueRef.child("batchSize").set(n);
 
   const issueTicket = () => {
-    setIssuedUpTo((prev) => {
-      const n = prev >= MAX_TICKET ? 1 : prev + 1;
-      return n;
+    queueRef.child("issuedUpTo").transaction((cur) => {
+      const prev = cur || 0;
+      return prev >= MAX_TICKET ? 1 : prev + 1;
     });
   };
 
   const callNextBatch = useCallback(() => {
-    setCurrentBatch((prevBatch) => {
-      // start point = one after the last number ever called (wraps at 100)
-      const lastCalled = history.length > 0 ? history[0].to : 0;
+    queueRef.transaction((cur) => {
+      const state = cur || { batchSize: 10, issuedUpTo: 0, currentBatch: [], history: [] };
+      const size = state.batchSize || 10;
+      const hist = state.history || [];
+      const lastCalled = hist.length > 0 ? hist[0].to : 0;
       let start = lastCalled >= MAX_TICKET ? 1 : lastCalled + 1;
       const nums = [];
-      let cur = start;
-      for (let i = 0; i < batchSize; i++) {
-        nums.push(cur);
-        cur = cur >= MAX_TICKET ? 1 : cur + 1;
+      let cur2 = start;
+      for (let i = 0; i < size; i++) {
+        nums.push(cur2);
+        cur2 = cur2 >= MAX_TICKET ? 1 : cur2 + 1;
       }
       const from = nums[0];
       const to = nums[nums.length - 1];
-      setHistory((h) => [{ from, to, nums, at: new Date() }, ...h].slice(0, 6));
+      const newHist = [{ from, to, nums, at: Date.now() }, ...hist].slice(0, 6);
       speakEn(
-        batchSize === 1
+        size === 1
           ? `Now serving ticket number ${from}.`
           : `Now serving tickets number ${from} to ${to}, please proceed to the counter.`
       );
-      return nums;
+      return { ...state, currentBatch: nums, history: newHist };
     });
-  }, [batchSize, history]);
+  }, []);
 
-  const recall = () => {
-    if (currentBatch.length === 0) return;
+  const recall = (currentBatch) => {
+    if (!currentBatch || currentBatch.length === 0) return;
     const from = currentBatch[0];
     const to = currentBatch[currentBatch.length - 1];
     speakEn(
@@ -102,6 +146,13 @@ function TicketQueue() {
         : `Repeating, tickets number ${from} to ${to}, please proceed to the counter.`
     );
   };
+
+  return { ...data, connected, setBatchSize, issueTicket, callNextBatch, recall };
+}
+
+function TicketQueue() {
+  const [view, setView] = useState("staff"); // 'staff' | 'board' | 'check'
+  const q = useQueueState();
 
   return (
     <div
@@ -124,6 +175,8 @@ function TicketQueue() {
           justifyContent: "space-between",
           padding: "14px 20px",
           borderBottom: `2px dashed ${COLORS.line}`,
+          flexWrap: "wrap",
+          gap: 10,
         }}
       >
         <div
@@ -141,6 +194,7 @@ function TicketQueue() {
           {[
             { k: "staff", label: "Counter" },
             { k: "board", label: "Display Board" },
+            { k: "check", label: "Check My Ticket" },
           ].map((t) => (
             <button
               key={t.k}
@@ -162,20 +216,15 @@ function TicketQueue() {
         </div>
       </div>
 
-      {view === "board" ? (
-        <BoardView currentBatch={currentBatch} history={history} recall={recall} issuedUpTo={issuedUpTo} />
-      ) : (
-        <StaffView
-          batchSize={batchSize}
-          setBatchSize={setBatchSize}
-          currentBatch={currentBatch}
-          history={history}
-          callNextBatch={callNextBatch}
-          recall={recall}
-          issuedUpTo={issuedUpTo}
-          issueTicket={issueTicket}
-        />
+      {!q.connected && (
+        <div style={{ padding: "10px 20px", color: COLORS.chalkDim, fontSize: 13 }}>
+          Connecting to live queue…
+        </div>
       )}
+
+      {view === "board" && <BoardView {...q} />}
+      {view === "staff" && <StaffView {...q} />}
+      {view === "check" && <CheckView {...q} />}
     </div>
   );
 }
@@ -189,7 +238,7 @@ function BoardView({ currentBatch, history, recall, issuedUpTo }) {
         NOW SERVING
       </div>
       <div
-        onClick={recall}
+        onClick={() => recall(currentBatch)}
         title="Tap to repeat the call"
         style={{
           fontFamily: "'Space Mono', monospace",
@@ -243,6 +292,105 @@ function BoardView({ currentBatch, history, recall, issuedUpTo }) {
   );
 }
 
+function CheckView({ currentBatch, history, issuedUpTo }) {
+  const [num, setNum] = useState("");
+  const [result, setResult] = useState(null);
+
+  const check = (e) => {
+    e.preventDefault();
+    const n = Number(num);
+    if (!n || n < 1 || n > MAX_TICKET) {
+      setResult({ kind: "invalid" });
+      return;
+    }
+    if (currentBatch.length === 0) {
+      setResult({ kind: "none" });
+      return;
+    }
+    const to = currentBatch[currentBatch.length - 1];
+    if (currentBatch.includes(n)) {
+      setResult({ kind: "now" });
+      return;
+    }
+    const ahead = ((n - to - 1 + MAX_TICKET) % MAX_TICKET) + 1;
+    setResult({ kind: "wait", ahead });
+  };
+
+  return (
+    <div style={{ padding: "40px 24px", maxWidth: 420, margin: "0 auto" }}>
+      <div style={{ color: COLORS.chalkDim, fontSize: 15, marginBottom: 16, textAlign: "center" }}>
+        Enter your ticket number
+      </div>
+      <form onSubmit={check} style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        <input
+          type="number"
+          min={1}
+          max={MAX_TICKET}
+          value={num}
+          onChange={(e) => setNum(e.target.value)}
+          placeholder="e.g. 042"
+          style={{ ...inputStyle, flex: 1, fontSize: 18, textAlign: "center" }}
+        />
+        <button type="submit" style={primaryBtn}>
+          Check
+        </button>
+      </form>
+
+      {result && (
+        <div
+          style={{
+            background: COLORS.boardDeep,
+            border: `1px solid ${COLORS.line}`,
+            borderRadius: 12,
+            padding: 20,
+            textAlign: "center",
+          }}
+        >
+          {result.kind === "invalid" && (
+            <div style={{ color: COLORS.brick }}>Enter a ticket number between 1 and {MAX_TICKET}.</div>
+          )}
+          {result.kind === "none" && (
+            <div style={{ color: COLORS.chalkDim }}>No tickets have been called yet.</div>
+          )}
+          {result.kind === "now" && (
+            <div style={{ color: COLORS.green, fontWeight: 700, fontSize: 18 }}>
+              It's your turn now — please come to the counter.
+            </div>
+          )}
+          {result.kind === "wait" && (
+            <div>
+              <div style={{ color: COLORS.chalk, fontSize: 18, fontWeight: 700 }}>
+                About {result.ahead} ticket{result.ahead > 1 ? "s" : ""} ahead of you
+              </div>
+              <div style={{ color: COLORS.chalkDim, fontSize: 13, marginTop: 6 }}>
+                This is an estimate based on the current call order.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div
+        style={{
+          marginTop: 30,
+          textAlign: "center",
+          color: COLORS.chalkDim,
+          fontSize: 13,
+          borderTop: `1px dashed ${COLORS.line}`,
+          paddingTop: 16,
+        }}
+      >
+        Currently serving:{" "}
+        <strong style={{ color: COLORS.mustard }}>
+          {currentBatch.length
+            ? `${pad(currentBatch[0])}\u2013${pad(currentBatch[currentBatch.length - 1])}`
+            : "---"}
+        </strong>
+      </div>
+    </div>
+  );
+}
+
 function StaffView({
   batchSize,
   setBatchSize,
@@ -265,7 +413,6 @@ function StaffView({
         padding: 20,
       }}
     >
-      {/* left: controls */}
       <div
         style={{
           background: COLORS.boardDeep,
@@ -314,7 +461,7 @@ function StaffView({
         </button>
 
         {currentBatch.length > 0 && (
-          <button onClick={recall} style={{ ...secondaryBtn, width: "100%", marginTop: 8 }}>
+          <button onClick={() => recall(currentBatch)} style={{ ...secondaryBtn, width: "100%", marginTop: 8 }}>
             Repeat call
           </button>
         )}
@@ -350,7 +497,6 @@ function StaffView({
         </div>
       </div>
 
-      {/* right: recent calls */}
       <div
         style={{
           background: COLORS.boardDeep,
@@ -390,7 +536,7 @@ function StaffView({
                   {pad(b.from)}{"\u2013"}{pad(b.to)}
                 </span>
                 <span style={{ color: COLORS.chalkDim, fontSize: 12 }}>
-                  {i === 0 ? "current" : b.at.toLocaleTimeString()}
+                  {i === 0 ? "current" : new Date(b.at).toLocaleTimeString()}
                 </span>
               </div>
             ))}
@@ -432,9 +578,9 @@ const secondaryBtn = {
   cursor: "pointer",
 };
 
-
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<TicketQueue />);
+
 </script>
 </body>
 </html>
