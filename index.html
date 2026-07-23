@@ -129,8 +129,8 @@ function useQueueState() {
       const newHist = [{ from, to, nums, at: Date.now() }, ...hist].slice(0, 6);
       speakEn(
         size === 1
-          ? `Now serving ticket number ${from}.`
-          : `Now serving tickets number ${from} to ${to}, please proceed to the counter.`
+          ? `Now entering, ticket number ${from}.`
+          : `Now entering, tickets number ${from} to ${to}, please proceed to the entrance.`
       );
       return { ...state, currentBatch: nums, history: newHist };
     });
@@ -143,11 +143,18 @@ function useQueueState() {
     speakEn(
       currentBatch.length === 1
         ? `Repeating, ticket number ${from}.`
-        : `Repeating, tickets number ${from} to ${to}, please proceed to the counter.`
+        : `Repeating, tickets number ${from} to ${to}, please proceed to the entrance.`
     );
   };
 
-  return { ...data, connected, setBatchSize, issueTicket, callNextBatch, recall };
+  const resetQueue = () => {
+    queueRef.transaction((cur) => {
+      const size = (cur && cur.batchSize) || 10;
+      return { batchSize: size, issuedUpTo: 0, currentBatch: [], history: [] };
+    });
+  };
+
+  return { ...data, connected, setBatchSize, issueTicket, callNextBatch, recall, resetQueue };
 }
 
 function TicketQueue() {
@@ -165,7 +172,7 @@ function TicketQueue() {
     >
       <link
         rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Orbitron:wght@700;800;900&display=swap"
       />
 
       <div
@@ -235,14 +242,14 @@ function BoardView({ currentBatch, history, recall, issuedUpTo }) {
   return (
     <div style={{ padding: "40px 24px", textAlign: "center" }}>
       <div style={{ color: COLORS.chalkDim, fontSize: 15, marginBottom: 8 }}>
-        NOW SERVING
+        NOW ENTERING
       </div>
       <div
         onClick={() => recall(currentBatch)}
         title="Tap to repeat the call"
         style={{
-          fontFamily: "'Space Mono', monospace",
-          fontWeight: 700,
+          fontFamily: "'Orbitron', monospace",
+          fontWeight: 900,
           fontSize: "min(16vw, 140px)",
           lineHeight: 1,
           color: currentBatch.length ? COLORS.mustard : COLORS.line,
@@ -274,7 +281,7 @@ function BoardView({ currentBatch, history, recall, issuedUpTo }) {
             <div
               key={i}
               style={{
-                fontFamily: "'Space Mono', monospace",
+                fontFamily: "'Orbitron', monospace",
                 fontWeight: 700,
                 fontSize: 24,
                 color: COLORS.chalkDim,
@@ -354,7 +361,7 @@ function CheckView({ currentBatch, history, issuedUpTo }) {
           )}
           {result.kind === "now" && (
             <div style={{ color: COLORS.green, fontWeight: 700, fontSize: 18 }}>
-              It's your turn now — please come to the counter.
+              It's your turn now — please proceed to the entrance.
             </div>
           )}
           {result.kind === "wait" && (
@@ -400,6 +407,7 @@ function StaffView({
   recall,
   issuedUpTo,
   issueTicket,
+  resetQueue,
 }) {
   const from = currentBatch[0];
   const to = currentBatch[currentBatch.length - 1];
@@ -468,13 +476,13 @@ function StaffView({
 
         <div style={{ marginTop: 22, borderTop: `1px dashed ${COLORS.line}`, paddingTop: 14 }}>
           <div style={{ color: COLORS.chalkDim, fontSize: 13, marginBottom: 8 }}>
-            Now serving
+            Now entering
           </div>
           <div
             style={{
-              fontFamily: "'Space Mono', monospace",
+              fontFamily: "'Orbitron', monospace",
               fontSize: 32,
-              fontWeight: 700,
+              fontWeight: 900,
               color: currentBatch.length ? COLORS.mustard : COLORS.line,
             }}
           >
@@ -490,10 +498,23 @@ function StaffView({
             <button onClick={issueTicket} style={secondaryBtn}>
               Issue next ticket
             </button>
-            <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 20, color: COLORS.chalk }}>
+            <span style={{ fontFamily: "'Orbitron', monospace", fontSize: 20, color: COLORS.chalk }}>
               {issuedUpTo ? pad(issuedUpTo) : "\u2014"}
             </span>
           </div>
+        </div>
+
+        <div style={{ marginTop: 18, borderTop: `1px dashed ${COLORS.line}`, paddingTop: 14 }}>
+          <button
+            onClick={() => {
+              if (window.confirm("Reset the whole queue? This clears the current call, history, and ticket counter for everyone.")) {
+                resetQueue();
+              }
+            }}
+            style={{ ...secondaryBtn, width: "100%", color: COLORS.brick, border: `1px solid ${COLORS.brick}` }}
+          >
+            Reset queue
+          </button>
         </div>
       </div>
 
@@ -527,7 +548,7 @@ function StaffView({
               >
                 <span
                   style={{
-                    fontFamily: "'Space Mono', monospace",
+                    fontFamily: "'Orbitron', monospace",
                     fontWeight: 700,
                     fontSize: 18,
                     color: i === 0 ? COLORS.mustard : COLORS.chalk,
